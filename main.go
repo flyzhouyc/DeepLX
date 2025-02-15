@@ -193,9 +193,7 @@ r.POST("/v1/chat/completions", authMiddleware(cfg), func(c *gin.Context) {
         return
     }
 
-    // 打印接收到的请求
-    log.Printf("Received request: %+v", req)
-
+    // 获取最后一条消息
     if len(req.Messages) == 0 {
         c.JSON(http.StatusBadRequest, gin.H{
             "error": "No messages provided",
@@ -203,11 +201,12 @@ r.POST("/v1/chat/completions", authMiddleware(cfg), func(c *gin.Context) {
         return
     }
     lastMessage := req.Messages[len(req.Messages)-1].Content
-    log.Printf("Last message: %s", lastMessage)
 
+    // 从消息内容中提取源语言和目标语言
     sourceLang := ""
-    targetLang := "ZH"  // 修改默认目标语言为中文
+    targetLang := "EN"  // 默认目标语言为英语
 
+    // 解析目标语言
     if strings.HasPrefix(lastMessage, "Translate to ") {
         parts := strings.SplitN(lastMessage, ":", 2)
         if len(parts) == 2 {
@@ -216,20 +215,14 @@ r.POST("/v1/chat/completions", authMiddleware(cfg), func(c *gin.Context) {
         }
     }
 
-    log.Printf("Translating from %s to %s: %s", sourceLang, targetLang, lastMessage)
-
-    // 调用翻译
+    // 调用 DeepL 翻译
     result, err := translate.TranslateByDeepLX(sourceLang, targetLang, lastMessage, "", cfg.Proxy, "")
     if err != nil {
-        log.Printf("Translation error: %v", err)
         c.JSON(http.StatusInternalServerError, gin.H{
             "error": fmt.Sprintf("Translation failed: %v", err),
         })
         return
     }
-
-    // 打印翻译结果
-    log.Printf("Translation result: Code=%d, Message=%s, Data=%s", result.Code, result.Message, result.Data)
 
     if result.Code != http.StatusOK {
         c.JSON(result.Code, gin.H{
@@ -238,12 +231,12 @@ r.POST("/v1/chat/completions", authMiddleware(cfg), func(c *gin.Context) {
         return
     }
 
-    // 构造响应
-    response := ChatCompletionResponse{
+    // 构造 OpenAI 格式的响应
+     response := ChatCompletionResponse{
         ID:      fmt.Sprintf("chatcmpl-%d", time.Now().Unix()),
-        Object:  "chat.completion",
+        Object:  "chat.completion.chunk",  // 修改为标准的 OpenAI 对象类型
         Created: time.Now().Unix(),
-        Model:   req.Model,
+        Model:   "gpt-3.5-turbo",         // 确保使用标准的模型名称
         Choices: []struct {
             Index        int `json:"index"`
             Message     struct {
@@ -269,17 +262,21 @@ r.POST("/v1/chat/completions", authMiddleware(cfg), func(c *gin.Context) {
             CompletionTokens int `json:"completion_tokens"`
             TotalTokens      int `json:"total_tokens"`
         }{
-            PromptTokens:     len(lastMessage),
-            CompletionTokens: len(result.Data),
-            TotalTokens:      len(lastMessage) + len(result.Data),
+            PromptTokens:     1,    // 使用固定值
+            CompletionTokens: 1,    // 使用固定值
+            TotalTokens:      2,    // 使用固定值
         },
     }
 
-    // 打印最终响应
-    log.Printf("Final response: %+v", response)
-
+    // 添加响应头
+    c.Header("Content-Type", "application/json")
+    c.Header("Access-Control-Allow-Origin", "*")
+    c.Header("Cache-Control", "no-cache")
+    c.Header("Connection", "keep-alive")
+    
     c.JSON(http.StatusOK, response)
 })
+
 
 
 
