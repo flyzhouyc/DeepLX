@@ -305,86 +305,92 @@ func main() {
 		})
 	})
 	r.POST("/v1/chat/completions", authMiddleware(cfg), func(c *gin.Context) {
-        var req ChatCompletionRequest
-        if err := c.BindJSON(&req); err != nil {
-            c.JSON(http.StatusBadRequest, gin.H{
-                "error": "Invalid request format",
-            })
-            return
+    var req ChatCompletionRequest
+    if err := c.BindJSON(&req); err != nil {
+        c.JSON(http.StatusBadRequest, gin.H{
+            "error": "Invalid request format",
+        })
+        return
+    }
+
+    // 获取最后一条消息
+    if len(req.Messages) == 0 {
+        c.JSON(http.StatusBadRequest, gin.H{
+            "error": "No messages provided",
+        })
+        return
+    }
+    lastMessage := req.Messages[len(req.Messages)-1].Content
+
+    // 从消息内容中提取源语言和目标语言
+    sourceLang := ""
+    targetLang := "ZH"  // 默认目标语言为英语
+
+    // 解析目标语言
+    if strings.HasPrefix(lastMessage, "Translate to ") {
+        parts := strings.SplitN(lastMessage, ":", 2)
+        if len(parts) == 2 {
+            targetLang = strings.TrimSpace(strings.TrimPrefix(parts[0], "Translate to "))
+            lastMessage = strings.TrimSpace(parts[1])
         }
+    }
 
-        // 获取最后一条消息
-        if len(req.Messages) == 0 {
-            c.JSON(http.StatusBadRequest, gin.H{
-                "error": "No messages provided",
-            })
-            return
-        }
-        lastMessage := req.Messages[len(req.Messages)-1].Content
+    // 调用 DeepL 翻译
+    result, err := translate.TranslateByDeepLX(sourceLang, targetLang, lastMessage, "", cfg.Proxy, "")
+    if err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{
+            "error": fmt.Sprintf("Translation failed: %v", err),
+        })
+        return
+    }
 
-        // 从消息内容中提取源语言和目标语言
-        // 默认源语言为自动检测，目标语言为英语
-        sourceLang := ""
-        targetLang := "EN"
+    if result.Code != http.StatusOK {
+        c.JSON(result.Code, gin.H{
+            "error": result.Message,
+        })
+        return
+    }
 
-        // 可以通过消息内容解析指定的语言
-        // 例如: "Translate to ZH: Hello world"
-        if strings.HasPrefix(lastMessage, "Translate to ") {
-            parts := strings.SplitN(lastMessage, ":", 2)
-            if len(parts) == 2 {
-                targetLang = strings.TrimSpace(strings.TrimPrefix(parts[0], "Translate to "))
-                lastMessage = strings.TrimSpace(parts[1])
-            }
-        }
-
-        // 调用 DeepL 翻译
-        result, err := translate.TranslateByDeepLX(sourceLang, targetLang, lastMessage, "", cfg.Proxy, "")
-        if err != nil {
-            c.JSON(http.StatusInternalServerError, gin.H{
-                "error": err.Error(),
-            })
-            return
-        }
-
-        // 构造 OpenAI 格式的响应
-        response := ChatCompletionResponse{
-            ID:      fmt.Sprintf("chatcmpl-%d", time.Now().Unix()),
-            Object:  "chat.completion",
-            Created: time.Now().Unix(),
-            Model:   req.Model,
-            Choices: []struct {
-                Index        int `json:"index"`
-                Message     struct {
+    // 构造 OpenAI 格式的响应
+    response := ChatCompletionResponse{
+        ID:      fmt.Sprintf("chatcmpl-%d", time.Now().Unix()),
+        Object:  "chat.completion",
+        Created: time.Now().Unix(),
+        Model:   req.Model,
+        Choices: []struct {
+            Index        int `json:"index"`
+            Message     struct {
+                Role    string `json:"role"`
+                Content string `json:"content"`
+            } `json:"message"`
+            FinishReason string `json:"finish_reason"`
+        }{
+            {
+                Index: 0,
+                Message: struct {
                     Role    string `json:"role"`
                     Content string `json:"content"`
-                } `json:"message"`
-                FinishReason string `json:"finish_reason"`
-            }{
-                {
-                    Index: 0,
-                    Message: struct {
-                        Role    string `json:"role"`
-                        Content string `json:"content"`
-                    }{
-                        Role:    "assistant",
-                        Content: result.Data,
-                    },
-                    FinishReason: "stop",
+                }{
+                    Role:    "assistant",
+                    Content: result.Data.(string), // 确保正确提取翻译结果
                 },
+                FinishReason: "stop",
             },
-            Usage: struct {
-                PromptTokens     int `json:"prompt_tokens"`
-                CompletionTokens int `json:"completion_tokens"`
-                TotalTokens      int `json:"total_tokens"`
-            }{
-                PromptTokens:     len(lastMessage),
-                CompletionTokens: len(result.Data),
-                TotalTokens:      len(lastMessage) + len(result.Data),
-            },
-        }
+        },
+        Usage: struct {
+            PromptTokens     int `json:"prompt_tokens"`
+            CompletionTokens int `json:"completion_tokens"`
+            TotalTokens      int `json:"total_tokens"`
+        }{
+            PromptTokens:     len(lastMessage),
+            CompletionTokens: len(result.Data.(string)),
+            TotalTokens:      len(lastMessage) + len(result.Data.(string)),
+        },
+    }
 
-        c.JSON(http.StatusOK, response)
-    })
+    c.JSON(http.StatusOK, response)
+})
+
 	r.Run(fmt.Sprintf("%v:%v", cfg.IP, cfg.Port))
 	
 }
