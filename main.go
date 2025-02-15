@@ -248,68 +248,10 @@ func main() {
 	})
 
 	// Free API endpoint, Consistent with the official API format
-	r.POST("/v2/translate", authMiddleware(cfg), func(c *gin.Context) {
-		proxyURL := cfg.Proxy
-
-		var translateText string
-		var targetLang string
-
-		translateText = c.PostForm("text")
-		targetLang = c.PostForm("target_lang")
-
-		if translateText == "" || targetLang == "" {
-			var jsonData struct {
-				Text       []string `json:"text"`
-				TargetLang string   `json:"target_lang"`
-			}
-
-			if err := c.BindJSON(&jsonData); err != nil {
-				c.JSON(http.StatusBadRequest, gin.H{
-					"code":    http.StatusBadRequest,
-					"message": "Invalid request payload",
-				})
-				return
-			}
-
-			translateText = strings.Join(jsonData.Text, "\n")
-			targetLang = jsonData.TargetLang
-		}
-
-		result, err := translate.TranslateByDeepLX("", targetLang, translateText, "", proxyURL, "")
-		if err != nil {
-			log.Fatalf("Translation failed: %s", err)
-		}
-
-		if result.Code == http.StatusOK {
-			c.JSON(http.StatusOK, gin.H{
-				"translations": []map[string]interface{}{
-					{
-						"detected_source_language": result.SourceLang,
-						"text":                     result.Data,
-					},
-				},
-			})
-		} else {
-			c.JSON(result.Code, gin.H{
-				"code":    result.Code,
-				"message": result.Message,
-			})
-		}
-	})
-
-	// Catch-all route to handle undefined paths
-	r.NoRoute(func(c *gin.Context) {
-		c.JSON(http.StatusNotFound, gin.H{
-			"code":    http.StatusNotFound,
-			"message": "Path not found",
-		})
-	})
-	// Pro API endpoint, Pro Account required
-r.POST("/v1/chat/completions", authMiddleware(cfg), func(c * gin.Context) {
+	r.POST("/v1/chat/completions", authMiddleware(cfg), func(c *gin.Context) {
     var req ChatCompletionRequest
-    if err: = c.BindJSON( & req);
-    err != nil {
-        c.JSON(http.StatusBadRequest, gin.H {
+    if err := c.BindJSON(&req); err != nil {
+        c.JSON(http.StatusBadRequest, gin.H{
             "error": "Invalid request format",
         })
         return
@@ -319,19 +261,19 @@ r.POST("/v1/chat/completions", authMiddleware(cfg), func(c * gin.Context) {
     log.Printf("Received request: %+v", req)
 
     if len(req.Messages) == 0 {
-        c.JSON(http.StatusBadRequest, gin.H {
+        c.JSON(http.StatusBadRequest, gin.H{
             "error": "No messages provided",
         })
         return
     }
-    lastMessage: = req.Messages[len(req.Messages) - 1].Content
+    lastMessage := req.Messages[len(req.Messages)-1].Content
     log.Printf("Last message: %s", lastMessage)
 
-    sourceLang: = ""
-    targetLang: = "ZH" // 修改默认目标语言为中文
+    sourceLang := ""
+    targetLang := "ZH" // 默认目标语言为中文
 
     if strings.HasPrefix(lastMessage, "Translate to ") {
-        parts: = strings.SplitN(lastMessage, ":", 2)
+        parts := strings.SplitN(lastMessage, ":", 2)
         if len(parts) == 2 {
             targetLang = strings.TrimSpace(strings.TrimPrefix(parts[0], "Translate to "))
             lastMessage = strings.TrimSpace(parts[1])
@@ -341,10 +283,10 @@ r.POST("/v1/chat/completions", authMiddleware(cfg), func(c * gin.Context) {
     log.Printf("Translating from %s to %s: %s", sourceLang, targetLang, lastMessage)
 
     // 调用翻译
-    result, err: = translate.TranslateByDeepLX(sourceLang, targetLang, lastMessage, "", cfg.Proxy, "")
+    result, err := translate.TranslateByDeepLX(sourceLang, targetLang, lastMessage, "", cfg.Proxy, "")
     if err != nil {
         log.Printf("Translation error: %v", err)
-        c.JSON(http.StatusInternalServerError, gin.H {
+        c.JSON(http.StatusInternalServerError, gin.H{
             "error": fmt.Sprintf("Translation failed: %v", err),
         })
         return
@@ -354,47 +296,46 @@ r.POST("/v1/chat/completions", authMiddleware(cfg), func(c * gin.Context) {
     log.Printf("Translation result: Code=%d, Message=%s, Data=%s", result.Code, result.Message, result.Data)
 
     if result.Code != http.StatusOK {
-        c.JSON(result.Code, gin.H {
+        c.JSON(result.Code, gin.H{
             "error": result.Message,
         })
         return
     }
 
     // 构造响应
-    response: = ChatCompletionResponse {
-        ID: fmt.Sprintf("chatcmpl-%d", time.Now().Unix()),
-        Object: "chat.completion",
+    response := ChatCompletionResponse{
+        ID:      fmt.Sprintf("chatcmpl-%d", time.Now().Unix()),
+        Object:  "chat.completion",
         Created: time.Now().Unix(),
-        Model: req.Model,
-        Choices: [] struct {
-            Index int `json:"index"`
-            Message struct {
-                Role string `json:"role"`
+        Model:   req.Model,
+        Choices: []struct {
+            Index        int    `json:"index"`
+            Message     struct {
+                Role    string `json:"role"`
                 Content string `json:"content"`
-            }
-            `json:"message"`
+            } `json:"message"`
             FinishReason string `json:"finish_reason"`
-        } {
+        }{
             {
                 Index: 0,
                 Message: struct {
-                    Role string `json:"role"`
+                    Role    string `json:"role"`
                     Content string `json:"content"`
-                } {
-                    Role: "assistant",
+                }{
+                    Role:    "assistant",
                     Content: result.Data,
                 },
                 FinishReason: "stop",
             },
         },
         Usage: struct {
-            PromptTokens int `json:"prompt_tokens"`
+            PromptTokens     int `json:"prompt_tokens"`
             CompletionTokens int `json:"completion_tokens"`
-            TotalTokens int `json:"total_tokens"`
-        } {
-            PromptTokens: len(lastMessage),
+            TotalTokens      int `json:"total_tokens"`
+        }{
+            PromptTokens:     len(lastMessage),
             CompletionTokens: len(result.Data),
-            TotalTokens: len(lastMessage) + len(result.Data),
+            TotalTokens:      len(lastMessage) + len(result.Data),
         },
     }
 
@@ -403,6 +344,8 @@ r.POST("/v1/chat/completions", authMiddleware(cfg), func(c * gin.Context) {
 
     c.JSON(http.StatusOK, response)
 })
+
+
 
 
 
