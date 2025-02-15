@@ -20,7 +20,7 @@ import (
 	"os"
 	"strings"
 	"time"
-	"encoding/json"
+	//"encoding/json"
 
 	translate "github.com/OwO-Network/DeepLX/translate"
 	"github.com/gin-contrib/cors"
