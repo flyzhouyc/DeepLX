@@ -257,20 +257,19 @@ func main() {
         return
     }
 
-    // 打印接收到的请求
-    log.Printf("Received request: %+v", req)
-
+    // 检查是否请求流式输出
+    stream := c.Query("stream") == "true"
+    
     if len(req.Messages) == 0 {
         c.JSON(http.StatusBadRequest, gin.H{
             "error": "No messages provided",
         })
         return
     }
+    
     lastMessage := req.Messages[len(req.Messages)-1].Content
-    log.Printf("Last message: %s", lastMessage)
-
     sourceLang := ""
-    targetLang := "ZH" // 默认目标语言为中文
+    targetLang := "ZH"
 
     if strings.HasPrefix(lastMessage, "Translate to ") {
         parts := strings.SplitN(lastMessage, ":", 2)
@@ -280,20 +279,14 @@ func main() {
         }
     }
 
-    log.Printf("Translating from %s to %s: %s", sourceLang, targetLang, lastMessage)
-
     // 调用翻译
     result, err := translate.TranslateByDeepLX(sourceLang, targetLang, lastMessage, "", cfg.Proxy, "")
     if err != nil {
-        log.Printf("Translation error: %v", err)
         c.JSON(http.StatusInternalServerError, gin.H{
             "error": fmt.Sprintf("Translation failed: %v", err),
         })
         return
     }
-
-    // 打印翻译结果
-    log.Printf("Translation result: Code=%d, Message=%s, Data=%s", result.Code, result.Message, result.Data)
 
     if result.Code != http.StatusOK {
         c.JSON(result.Code, gin.H{
@@ -302,48 +295,93 @@ func main() {
         return
     }
 
-    // 构造响应
-    response := ChatCompletionResponse{
+    // 设置响应头
+    c.Header("Content-Type", "text/event-stream")
+    c.Header("Cache-Control", "no-cache")
+    c.Header("Connection", "keep-alive")
+    c.Header("Transfer-Encoding", "chunked")
+
+    // 创建基本响应结构
+    baseResponse := struct {
+        ID      string `json:"id"`
+        Object  string `json:"object"`
+        Created int64  `json:"created"`
+        Model   string `json:"model"`
+        Choices []struct {
+            Index        int    `json:"index"`
+            Delta       struct {
+                Content string `json:"content"`
+            } `json:"delta"`
+            FinishReason *string `json:"finish_reason"`
+        } `json:"choices"`
+    }{
         ID:      fmt.Sprintf("chatcmpl-%d", time.Now().Unix()),
-        Object:  "chat.completion",
+        Object:  "chat.completion.chunk",
         Created: time.Now().Unix(),
         Model:   req.Model,
-        Choices: []struct {
-            Index        int    `json:"index"`
-            Message     struct {
-                Role    string `json:"role"`
-                Content string `json:"content"`
-            } `json:"message"`
-            FinishReason string `json:"finish_reason"`
-        }{
-            {
-                Index: 0,
-                Message: struct {
-                    Role    string `json:"role"`
-                    Content string `json:"content"`
-                }{
-                    Role:    "assistant",
-                    Content: result.Data,
-                },
-                FinishReason: "stop",
-            },
-        },
-        Usage: struct {
-            PromptTokens     int `json:"prompt_tokens"`
-            CompletionTokens int `json:"completion_tokens"`
-            TotalTokens      int `json:"total_tokens"`
-        }{
-            PromptTokens:     len(lastMessage),
-            CompletionTokens: len(result.Data),
-            TotalTokens:      len(lastMessage) + len(result.Data),
-        },
     }
 
-    // 打印最终响应
-    log.Printf("Final response: %+v", response)
+    // 将翻译结果分成多个字符
+    chars := []rune(result.Data)
+    
+    // 发送开始标记
+    startChoice := struct {
+        Index int `json:"index"`
+        Delta struct {
+            Role string `json:"role"`
+        } `json:"delta"`
+        FinishReason *string `json:"finish_reason"`
+    }{
+        Index: 0,
+        Delta: struct {
+            Role string `json:"role"`
+        }{
+            Role: "assistant",
+        },
+    }
+    baseResponse.Choices = []struct {
+        Index        int    `json:"index"`
+        Delta       struct {
+            Content string `json:"content"`
+        } `json:"delta"`
+        FinishReason *string `json:"finish_reason"`
+    }{{
+        Index: 0,
+        Delta: struct {
+            Content string `json:"content"`
+        }{},
+    }}
+    
+    jsonData, _ := json.Marshal(baseResponse)
+    c.Writer.Write([]byte("data: " + string(jsonData) + "\n\n"))
+    c.Writer.Flush()
 
-    c.JSON(http.StatusOK, response)
+    // 逐字符发送
+    for i, char := range chars {
+        baseResponse.Choices[0].Delta.Content = string(char)
+        baseResponse.Choices[0].FinishReason = nil
+        
+        jsonData, _ := json.Marshal(baseResponse)
+        c.Writer.Write([]byte("data: " + string(jsonData) + "\n\n"))
+        c.Writer.Flush()
+        
+        // 最后一个字符时发送完成标记
+        if i == len(chars)-1 {
+            finishReason := "stop"
+            baseResponse.Choices[0].Delta.Content = ""
+            baseResponse.Choices[0].FinishReason = &finishReason
+            
+            jsonData, _ := json.Marshal(baseResponse)
+            c.Writer.Write([]byte("data: " + string(jsonData) + "\n\n"))
+            c.Writer.Write([]byte("data: [DONE]\n\n"))
+            c.Writer.Flush()
+        }
+
+        // 添加一些延迟以模拟打字效果
+        time.Sleep(50 * time.Millisecond)
+    }
 })
+
 
 
 
