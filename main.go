@@ -13,7 +13,7 @@
 package main
 
 import (
-	"encoding/json"
+	//"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -197,19 +197,17 @@ func main() {
     case "deepl-en-zh":
         sourceLang = "EN"
         targetLang = "ZH"
-    case "deepl-auto-zh": // 自动检测源语言，翻译为中文
-        sourceLang = ""   // 空字符串表示自动检测
+    case "deepl-auto-zh":
+        sourceLang = ""
         targetLang = "ZH"
-    case "deepl-auto-en": // 自动检测源语言，翻译为英文
-        sourceLang = ""   // 空字符串表示自动检测
+    case "deepl-auto-en":
+        sourceLang = ""
         targetLang = "EN"
     default:
-        // 默认行为：自动检测源语言，翻译为中文
         sourceLang = ""
         targetLang = "ZH"
     }
 
-    // 如果消息以 "Translate to " 开头，则覆盖模型设定的目标语言
     if strings.HasPrefix(lastMessage, "Translate to ") {
         parts := strings.SplitN(lastMessage, ":", 2)
         if len(parts) == 2 {
@@ -233,64 +231,32 @@ func main() {
         return
     }
 
-    // 设置 SSE 响应头
-    c.Header("Content-Type", "text/event-stream")
-    c.Header("Cache-Control", "no-cache")
-    c.Header("Connection", "keep-alive")
-    c.Header("Transfer-Encoding", "chunked")
-
-    // 创建响应结构
-    chunk := ChatCompletionChunk{
-        ID:      fmt.Sprintf("chatcmpl-%d", time.Now().Unix()),
-        Object:  "chat.completion.chunk",
-        Created: time.Now().Unix(),
-        Model:   req.Model,
-        Choices: []struct {
-            Index        int    `json:"index"`
-            Delta       struct {
-                Content string `json:"content"`
-                Role    string `json:"role,omitempty"`
-            } `json:"delta"`
-            FinishReason *string `json:"finish_reason"`
-        }{{
-            Index: 0,
-            Delta: struct {
-                Content string `json:"content"`
-                Role    string `json:"role,omitempty"`
-            }{
-                Role: "assistant",
+    // 返回标准的 ChatCompletion 响应格式
+    response := gin.H{
+        "id":      fmt.Sprintf("chatcmpl-%d", time.Now().Unix()),
+        "object":  "chat.completion",
+        "created": time.Now().Unix(),
+        "model":   req.Model,
+        "choices": []gin.H{
+            {
+                "index": 0,
+                "message": gin.H{
+                    "role":    "assistant",
+                    "content": result.Data,
+                },
+                "finish_reason": "stop",
             },
-        }},
+        },
+        "usage": gin.H{
+            "prompt_tokens":     0,
+            "completion_tokens": 0,
+            "total_tokens":      0,
+        },
     }
 
-    // 发送角色信息
-    if err := writeSSE(c, chunk); err != nil {
-        log.Printf("Error writing SSE: %v", err)
-        return
-    }
-
-    // 发送翻译内容
-    chunk.Choices[0].Delta.Role = ""
-    chunk.Choices[0].Delta.Content = result.Data
-    if err := writeSSE(c, chunk); err != nil {
-        log.Printf("Error writing SSE: %v", err)
-        return
-    }
-
-    // 发送完成标记
-    finishReason := "stop"
-    chunk.Choices[0].Delta.Content = ""
-    chunk.Choices[0].FinishReason = &finishReason
-    if err := writeSSE(c, chunk); err != nil {
-        log.Printf("Error writing SSE: %v", err)
-        return
-    }
-
-    if _, err := c.Writer.Write([]byte("data: [DONE]\n\n")); err != nil {
-        log.Printf("Error writing final SSE: %v", err)
-    }
-    c.Writer.Flush()
+    c.JSON(http.StatusOK, response)
 })
+
 
 	r.Run(fmt.Sprintf("%v:%v", cfg.IP, cfg.Port))
 }
