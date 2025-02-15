@@ -304,9 +304,7 @@ func main() {
 			"message": "Path not found",
 		})
 	})
-
-	r.Run(fmt.Sprintf("%v:%v", cfg.IP, cfg.Port))
-	    r.POST("/v1/chat/completions", authMiddleware(cfg), func(c *gin.Context) {
+	r.POST("/v1/chat/completions", authMiddleware(cfg), func(c *gin.Context) {
         var req ChatCompletionRequest
         if err := c.BindJSON(&req); err != nil {
             c.JSON(http.StatusBadRequest, gin.H{
@@ -387,4 +385,6 @@ func main() {
 
         c.JSON(http.StatusOK, response)
     })
+	r.Run(fmt.Sprintf("%v:%v", cfg.IP, cfg.Port))
+	
 }
