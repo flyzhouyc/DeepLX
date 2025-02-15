@@ -185,6 +185,9 @@ func main() {
 
 	// Pro API endpoint, Pro Account required
 r.POST("/v1/chat/completions", authMiddleware(cfg), func(c *gin.Context) {
+	 body, _ := io.ReadAll(c.Request.Body)
+        log.Printf("Raw request body: %s", string(body))
+        c.Request.Body = io.NopCloser(bytes.NewBuffer(body))
     var req ChatCompletionRequest
     if err := c.BindJSON(&req); err != nil {
         c.JSON(http.StatusBadRequest, gin.H{
