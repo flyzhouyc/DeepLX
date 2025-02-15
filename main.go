@@ -184,126 +184,6 @@ func main() {
 	})
 
 	// Pro API endpoint, Pro Account required
-	r.POST("/v1/translate", authMiddleware(cfg), func(c *gin.Context) {
-		req := PayloadFree{}
-		c.BindJSON(&req)
-
-		sourceLang := req.SourceLang
-		targetLang := req.TargetLang
-		translateText := req.TransText
-		tagHandling := req.TagHandling
-		proxyURL := cfg.Proxy
-
-		dlSession := cfg.DlSession
-
-		if tagHandling != "" && tagHandling != "html" && tagHandling != "xml" {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"code":    http.StatusBadRequest,
-				"message": "Invalid tag_handling value. Allowed values are 'html' and 'xml'.",
-			})
-			return
-		}
-
-		cookie := c.GetHeader("Cookie")
-		if cookie != "" {
-			dlSession = strings.Replace(cookie, "dl_session=", "", -1)
-		}
-
-		if dlSession == "" {
-			c.JSON(http.StatusUnauthorized, gin.H{
-				"code":    http.StatusUnauthorized,
-				"message": "No dl_session Found",
-			})
-			return
-		} else if strings.Contains(dlSession, ".") {
-			c.JSON(http.StatusUnauthorized, gin.H{
-				"code":    http.StatusUnauthorized,
-				"message": "Your account is not a Pro account. Please upgrade your account or switch to a different account.",
-			})
-			return
-		}
-
-		result, err := translate.TranslateByDeepLX(sourceLang, targetLang, translateText, tagHandling, proxyURL, dlSession)
-		if err != nil {
-			log.Fatalf("Translation failed: %s", err)
-		}
-
-		if result.Code == http.StatusOK {
-			c.JSON(http.StatusOK, gin.H{
-				"code":         http.StatusOK,
-				"id":           result.ID,
-				"data":         result.Data,
-				"alternatives": result.Alternatives,
-				"source_lang":  result.SourceLang,
-				"target_lang":  result.TargetLang,
-				"method":       result.Method,
-			})
-		} else {
-			c.JSON(result.Code, gin.H{
-				"code":    result.Code,
-				"message": result.Message,
-			})
-
-		}
-	})
-
-	// Free API endpoint, Consistent with the official API format
-	r.POST("/v2/translate", authMiddleware(cfg), func(c *gin.Context) {
-		proxyURL := cfg.Proxy
-
-		var translateText string
-		var targetLang string
-
-		translateText = c.PostForm("text")
-		targetLang = c.PostForm("target_lang")
-
-		if translateText == "" || targetLang == "" {
-			var jsonData struct {
-				Text       []string `json:"text"`
-				TargetLang string   `json:"target_lang"`
-			}
-
-			if err := c.BindJSON(&jsonData); err != nil {
-				c.JSON(http.StatusBadRequest, gin.H{
-					"code":    http.StatusBadRequest,
-					"message": "Invalid request payload",
-				})
-				return
-			}
-
-			translateText = strings.Join(jsonData.Text, "\n")
-			targetLang = jsonData.TargetLang
-		}
-
-		result, err := translate.TranslateByDeepLX("", targetLang, translateText, "", proxyURL, "")
-		if err != nil {
-			log.Fatalf("Translation failed: %s", err)
-		}
-
-		if result.Code == http.StatusOK {
-			c.JSON(http.StatusOK, gin.H{
-				"translations": []map[string]interface{}{
-					{
-						"detected_source_language": result.SourceLang,
-						"text":                     result.Data,
-					},
-				},
-			})
-		} else {
-			c.JSON(result.Code, gin.H{
-				"code":    result.Code,
-				"message": result.Message,
-			})
-		}
-	})
-
-	// Catch-all route to handle undefined paths
-	r.NoRoute(func(c *gin.Context) {
-		c.JSON(http.StatusNotFound, gin.H{
-			"code":    http.StatusNotFound,
-			"message": "Path not found",
-		})
-	})
 	r.POST("/v1/chat/completions", authMiddleware(cfg), func(c *gin.Context) {
     var req ChatCompletionRequest
     if err := c.BindJSON(&req); err != nil {
@@ -323,8 +203,8 @@ func main() {
     lastMessage := req.Messages[len(req.Messages)-1].Content
 
     // 从消息内容中提取源语言和目标语言
-    sourceLang := "EN"
-    targetLang := "ZH"  // 默认目标语言为英语
+    sourceLang := ""
+    targetLang := "EN"  // 默认目标语言为英语
 
     // 解析目标语言
     if strings.HasPrefix(lastMessage, "Translate to ") {
@@ -372,7 +252,7 @@ func main() {
                     Content string `json:"content"`
                 }{
                     Role:    "assistant",
-                    Content: result.Data.(string), // 确保正确提取翻译结果
+                    Content: result.Data, // 直接使用 result.Data，它已经是 string 类型
                 },
                 FinishReason: "stop",
             },
@@ -383,13 +263,14 @@ func main() {
             TotalTokens      int `json:"total_tokens"`
         }{
             PromptTokens:     len(lastMessage),
-            CompletionTokens: len(result.Data.(string)),
-            TotalTokens:      len(lastMessage) + len(result.Data.(string)),
+            CompletionTokens: len(result.Data),
+            TotalTokens:      len(lastMessage) + len(result.Data),
         },
     }
 
     c.JSON(http.StatusOK, response)
 })
+
 
 	r.Run(fmt.Sprintf("%v:%v", cfg.IP, cfg.Port))
 	
