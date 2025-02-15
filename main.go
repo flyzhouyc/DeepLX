@@ -141,7 +141,7 @@ func main() {
 	})
 
 	// Free API endpoint, No Pro Account required
-	r.POST("/v1/chat/completions", authMiddleware(cfg), func(c *gin.Context) {
+    r.POST("/v1/chat/completions", authMiddleware(cfg), func(c *gin.Context) {
     var req ChatCompletionRequest
     if err := c.BindJSON(&req); err != nil {
         c.JSON(http.StatusBadRequest, gin.H{
@@ -185,69 +185,45 @@ func main() {
         return
     }
 
-    // 设置响应头
-    c.Header("Content-Type", "text/event-stream")
-    c.Header("Cache-Control", "no-cache")
-    c.Header("Connection", "keep-alive")
-    c.Header("Transfer-Encoding", "chunked")
-
-    // 创建基本响应结构
-    baseResponse := struct {
-        ID      string `json:"id"`
-        Object  string `json:"object"`
-        Created int64  `json:"created"`
-        Model   string `json:"model"`
-        Choices []struct {
-            Index        int    `json:"index"`
-            Delta       struct {
-                Content string `json:"content"`
-                Role    string `json:"role,omitempty"`
-            } `json:"delta"`
-            FinishReason *string `json:"finish_reason"`
-        } `json:"choices"`
-    }{
+    // 创建非流式响应
+    response := ChatCompletionResponse{
         ID:      fmt.Sprintf("chatcmpl-%d", time.Now().Unix()),
-        Object:  "chat.completion.chunk",
+        Object:  "chat.completion",
         Created: time.Now().Unix(),
         Model:   req.Model,
         Choices: []struct {
-            Index        int    `json:"index"`
-            Delta       struct {
+            Index        int `json:"index"`
+            Message     struct {
+                Role    string `json:"role"`
                 Content string `json:"content"`
-                Role    string `json:"role,omitempty"`
-            } `json:"delta"`
-            FinishReason *string `json:"finish_reason"`
-        }{{
-            Index: 0,
-            Delta: struct {
-                Content string `json:"content"`
-                Role    string `json:"role,omitempty"`
-            }{
-                Role: "assistant",
+            } `json:"message"`
+            FinishReason string `json:"finish_reason"`
+        }{
+            {
+                Index: 0,
+                Message: struct {
+                    Role    string `json:"role"`
+                    Content string `json:"content"`
+                }{
+                    Role:    "assistant",
+                    Content: result.Data,
+                },
+                FinishReason: "stop",
             },
-        }},
+        },
+        Usage: struct {
+            PromptTokens     int `json:"prompt_tokens"`
+            CompletionTokens int `json:"completion_tokens"`
+            TotalTokens      int `json:"total_tokens"`
+        }{
+            PromptTokens:     len(lastMessage),
+            CompletionTokens: len(result.Data),
+            TotalTokens:      len(lastMessage) + len(result.Data),
+        },
     }
 
-    // 发送角色信息
-    jsonData, _ := json.Marshal(baseResponse)
-    c.Writer.Write([]byte("data: " + string(jsonData) + "\n\n"))
-    c.Writer.Flush()
-
-    // 发送翻译内容
-    baseResponse.Choices[0].Delta.Role = ""
-    baseResponse.Choices[0].Delta.Content = result.Data
-    jsonData, _ = json.Marshal(baseResponse)
-    c.Writer.Write([]byte("data: " + string(jsonData) + "\n\n"))
-    c.Writer.Flush()
-
-    // 发送完成标记
-    finishReason := "stop"
-    baseResponse.Choices[0].Delta.Content = ""
-    baseResponse.Choices[0].FinishReason = &finishReason
-    jsonData, _ = json.Marshal(baseResponse)
-    c.Writer.Write([]byte("data: " + string(jsonData) + "\n\n"))
-    c.Writer.Write([]byte("data: [DONE]\n\n"))
-    c.Writer.Flush()
+    c.JSON(http.StatusOK, response)
 })
+
 	r.Run(fmt.Sprintf("%v:%v", cfg.IP, cfg.Port))
 }
