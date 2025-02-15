@@ -19,6 +19,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"time"
 
 	translate "github.com/OwO-Network/DeepLX/translate"
 	"github.com/gin-contrib/cors"
@@ -71,6 +72,33 @@ type PayloadAPI struct {
 	TargetLang  string   `json:"target_lang"`
 	SourceLang  string   `json:"source_lang"`
 	TagHandling string   `json:"tag_handling"`
+}
+type ChatCompletionRequest struct {
+    Messages []struct {
+        Role    string `json:"role"`
+        Content string `json:"content"`
+    } `json:"messages"`
+    Model string `json:"model"`
+}
+
+type ChatCompletionResponse struct {
+    ID      string `json:"id"`
+    Object  string `json:"object"`
+    Created int64  `json:"created"`
+    Model   string `json:"model"`
+    Choices []struct {
+        Index        int `json:"index"`
+        Message     struct {
+            Role    string `json:"role"`
+            Content string `json:"content"`
+        } `json:"message"`
+        FinishReason string `json:"finish_reason"`
+    } `json:"choices"`
+    Usage struct {
+        PromptTokens     int `json:"prompt_tokens"`
+        CompletionTokens int `json:"completion_tokens"`
+        TotalTokens      int `json:"total_tokens"`
+    } `json:"usage"`
 }
 
 func main() {
