@@ -323,7 +323,7 @@ func main() {
     lastMessage := req.Messages[len(req.Messages)-1].Content
 
     // 从消息内容中提取源语言和目标语言
-    sourceLang := ""
+    sourceLang := "EN"
     targetLang := "ZH"  // 默认目标语言为英语
 
     // 解析目标语言
