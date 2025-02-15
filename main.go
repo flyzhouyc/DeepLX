@@ -20,6 +20,7 @@ import (
 	"os"
 	"strings"
 	"time"
+	"encoding/json"
 
 	translate "github.com/OwO-Network/DeepLX/translate"
 	"github.com/gin-contrib/cors"
@@ -257,9 +258,6 @@ func main() {
         return
     }
 
-    // 检查是否请求流式输出
-    stream := c.Query("stream") == "true"
-    
     if len(req.Messages) == 0 {
         c.JSON(http.StatusBadRequest, gin.H{
             "error": "No messages provided",
@@ -311,6 +309,7 @@ func main() {
             Index        int    `json:"index"`
             Delta       struct {
                 Content string `json:"content"`
+                Role    string `json:"role,omitempty"`
             } `json:"delta"`
             FinishReason *string `json:"finish_reason"`
         } `json:"choices"`
@@ -319,42 +318,34 @@ func main() {
         Object:  "chat.completion.chunk",
         Created: time.Now().Unix(),
         Model:   req.Model,
+        Choices: []struct {
+            Index        int    `json:"index"`
+            Delta       struct {
+                Content string `json:"content"`
+                Role    string `json:"role,omitempty"`
+            } `json:"delta"`
+            FinishReason *string `json:"finish_reason"`
+        }{{
+            Index: 0,
+            Delta: struct {
+                Content string `json:"content"`
+                Role    string `json:"role,omitempty"`
+            }{
+                Role: "assistant",
+            },
+        }},
     }
 
-    // 将翻译结果分成多个字符
-    chars := []rune(result.Data)
-    
-    // 发送开始标记
-    startChoice := struct {
-        Index int `json:"index"`
-        Delta struct {
-            Role string `json:"role"`
-        } `json:"delta"`
-        FinishReason *string `json:"finish_reason"`
-    }{
-        Index: 0,
-        Delta: struct {
-            Role string `json:"role"`
-        }{
-            Role: "assistant",
-        },
-    }
-    baseResponse.Choices = []struct {
-        Index        int    `json:"index"`
-        Delta       struct {
-            Content string `json:"content"`
-        } `json:"delta"`
-        FinishReason *string `json:"finish_reason"`
-    }{{
-        Index: 0,
-        Delta: struct {
-            Content string `json:"content"`
-        }{},
-    }}
-    
+    // 发送角色信息
     jsonData, _ := json.Marshal(baseResponse)
     c.Writer.Write([]byte("data: " + string(jsonData) + "\n\n"))
     c.Writer.Flush()
+
+    // 重置 Delta 内容，开始发送实际内容
+    baseResponse.Choices[0].Delta.Role = ""
+
+    // 将翻译结果分成多个字符
+    chars := []rune(result.Data)
 
     // 逐字符发送
     for i, char := range chars {
@@ -381,11 +372,5 @@ func main() {
         time.Sleep(50 * time.Millisecond)
     }
 })
-
-
-
-
-
-
 	r.Run(fmt.Sprintf("%v:%v", cfg.IP, cfg.Port))
 }
