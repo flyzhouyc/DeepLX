@@ -141,114 +141,6 @@ func main() {
 	})
 
 	// Free API endpoint, No Pro Account required
-	r.POST("/translate", authMiddleware(cfg), func(c *gin.Context) {
-		req := PayloadFree{}
-		c.BindJSON(&req)
-
-		sourceLang := req.SourceLang
-		targetLang := req.TargetLang
-		translateText := req.TransText
-		tagHandling := req.TagHandling
-
-		proxyURL := cfg.Proxy
-
-		if tagHandling != "" && tagHandling != "html" && tagHandling != "xml" {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"code":    http.StatusBadRequest,
-				"message": "Invalid tag_handling value. Allowed values are 'html' and 'xml'.",
-			})
-			return
-		}
-
-		result, err := translate.TranslateByDeepLX(sourceLang, targetLang, translateText, tagHandling, proxyURL, "")
-		if err != nil {
-			log.Fatalf("Translation failed: %s", err)
-		}
-
-		if result.Code == http.StatusOK {
-			c.JSON(http.StatusOK, gin.H{
-				"code":         http.StatusOK,
-				"id":           result.ID,
-				"data":         result.Data,
-				"alternatives": result.Alternatives,
-				"source_lang":  result.SourceLang,
-				"target_lang":  result.TargetLang,
-				"method":       result.Method,
-			})
-		} else {
-			c.JSON(result.Code, gin.H{
-				"code":    result.Code,
-				"message": result.Message,
-			})
-
-		}
-	})
-
-	// Pro API endpoint, Pro Account required
-	r.POST("/v1/translate", authMiddleware(cfg), func(c *gin.Context) {
-		req := PayloadFree{}
-		c.BindJSON(&req)
-
-		sourceLang := req.SourceLang
-		targetLang := req.TargetLang
-		translateText := req.TransText
-		tagHandling := req.TagHandling
-		proxyURL := cfg.Proxy
-
-		dlSession := cfg.DlSession
-
-		if tagHandling != "" && tagHandling != "html" && tagHandling != "xml" {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"code":    http.StatusBadRequest,
-				"message": "Invalid tag_handling value. Allowed values are 'html' and 'xml'.",
-			})
-			return
-		}
-
-		cookie := c.GetHeader("Cookie")
-		if cookie != "" {
-			dlSession = strings.Replace(cookie, "dl_session=", "", -1)
-		}
-
-		if dlSession == "" {
-			c.JSON(http.StatusUnauthorized, gin.H{
-				"code":    http.StatusUnauthorized,
-				"message": "No dl_session Found",
-			})
-			return
-		} else if strings.Contains(dlSession, ".") {
-			c.JSON(http.StatusUnauthorized, gin.H{
-				"code":    http.StatusUnauthorized,
-				"message": "Your account is not a Pro account. Please upgrade your account or switch to a different account.",
-			})
-			return
-		}
-
-		result, err := translate.TranslateByDeepLX(sourceLang, targetLang, translateText, tagHandling, proxyURL, dlSession)
-		if err != nil {
-			log.Fatalf("Translation failed: %s", err)
-		}
-
-		if result.Code == http.StatusOK {
-			c.JSON(http.StatusOK, gin.H{
-				"code":         http.StatusOK,
-				"id":           result.ID,
-				"data":         result.Data,
-				"alternatives": result.Alternatives,
-				"source_lang":  result.SourceLang,
-				"target_lang":  result.TargetLang,
-				"method":       result.Method,
-			})
-		} else {
-			c.JSON(result.Code, gin.H{
-				"code":    result.Code,
-				"message": result.Message,
-			})
-
-		}
-	})
-
-	// Free API endpoint, Consistent with the official API format
 	r.POST("/v1/chat/completions", authMiddleware(cfg), func(c *gin.Context) {
     var req ChatCompletionRequest
     if err := c.BindJSON(&req); err != nil {
@@ -341,36 +233,21 @@ func main() {
     c.Writer.Write([]byte("data: " + string(jsonData) + "\n\n"))
     c.Writer.Flush()
 
-    // 重置 Delta 内容，开始发送实际内容
+    // 发送翻译内容
     baseResponse.Choices[0].Delta.Role = ""
+    baseResponse.Choices[0].Delta.Content = result.Data
+    jsonData, _ = json.Marshal(baseResponse)
+    c.Writer.Write([]byte("data: " + string(jsonData) + "\n\n"))
+    c.Writer.Flush()
 
-    // 将翻译结果分成多个字符
-    chars := []rune(result.Data)
-
-    // 逐字符发送
-    for i, char := range chars {
-        baseResponse.Choices[0].Delta.Content = string(char)
-        baseResponse.Choices[0].FinishReason = nil
-        
-        jsonData, _ := json.Marshal(baseResponse)
-        c.Writer.Write([]byte("data: " + string(jsonData) + "\n\n"))
-        c.Writer.Flush()
-        
-        // 最后一个字符时发送完成标记
-        if i == len(chars)-1 {
-            finishReason := "stop"
-            baseResponse.Choices[0].Delta.Content = ""
-            baseResponse.Choices[0].FinishReason = &finishReason
-            
-            jsonData, _ := json.Marshal(baseResponse)
-            c.Writer.Write([]byte("data: " + string(jsonData) + "\n\n"))
-            c.Writer.Write([]byte("data: [DONE]\n\n"))
-            c.Writer.Flush()
-        }
-
-        // 添加一些延迟以模拟打字效果
-        time.Sleep(50 * time.Millisecond)
-    }
+    // 发送完成标记
+    finishReason := "stop"
+    baseResponse.Choices[0].Delta.Content = ""
+    baseResponse.Choices[0].FinishReason = &finishReason
+    jsonData, _ = json.Marshal(baseResponse)
+    c.Writer.Write([]byte("data: " + string(jsonData) + "\n\n"))
+    c.Writer.Write([]byte("data: [DONE]\n\n"))
+    c.Writer.Flush()
 })
 	r.Run(fmt.Sprintf("%v:%v", cfg.IP, cfg.Port))
 }
