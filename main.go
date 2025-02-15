@@ -159,8 +159,29 @@ func main() {
     
     lastMessage := req.Messages[len(req.Messages)-1].Content
     sourceLang := ""
-    targetLang := "ZH"
+    targetLang := ""
 
+    // 根据model名称决定翻译方向
+    switch req.Model {
+    case "deepl-zh-en":
+        sourceLang = "ZH"
+        targetLang = "EN"
+    case "deepl-en-zh":
+        sourceLang = "EN"
+        targetLang = "ZH"
+    case "deepl-auto-zh": // 自动检测源语言，翻译为中文
+        sourceLang = ""   // 空字符串表示自动检测
+        targetLang = "ZH"
+    case "deepl-auto-en": // 自动检测源语言，翻译为英文
+        sourceLang = ""   // 空字符串表示自动检测
+        targetLang = "EN"
+    default:
+        // 默认行为：自动检测源语言，翻译为中文
+        sourceLang = ""
+        targetLang = "ZH"
+    }
+
+    // 如果消息以 "Translate to " 开头，则覆盖模型设定的目标语言
     if strings.HasPrefix(lastMessage, "Translate to ") {
         parts := strings.SplitN(lastMessage, ":", 2)
         if len(parts) == 2 {
@@ -169,8 +190,7 @@ func main() {
         }
     }
 
-    // 调用翻译
-    result, err := translate.TranslateByDeepLX(sourceLang, targetLang, lastMessage, "", cfg.Proxy, "")
+    result, err := translate.TranslateByDeepLX(sourceLang, targetLang, lastMessage, "", cfg.Proxy, cfg.DlSession)
     if err != nil {
         c.JSON(http.StatusInternalServerError, gin.H{
             "error": fmt.Sprintf("Translation failed: %v", err),
@@ -185,27 +205,14 @@ func main() {
         return
     }
 
-    // 设置响应头
+    // 设置 SSE 响应头
     c.Header("Content-Type", "text/event-stream")
     c.Header("Cache-Control", "no-cache")
     c.Header("Connection", "keep-alive")
     c.Header("Transfer-Encoding", "chunked")
 
-    // 创建基本响应结构
-    baseResponse := struct {
-        ID      string `json:"id"`
-        Object  string `json:"object"`
-        Created int64  `json:"created"`
-        Model   string `json:"model"`
-        Choices []struct {
-            Index        int    `json:"index"`
-            Delta       struct {
-                Content string `json:"content"`
-                Role    string `json:"role,omitempty"`
-            } `json:"delta"`
-            FinishReason *string `json:"finish_reason"`
-        } `json:"choices"`
-    }{
+    // 创建响应结构
+    chunk := ChatCompletionChunk{
         ID:      fmt.Sprintf("chatcmpl-%d", time.Now().Unix()),
         Object:  "chat.completion.chunk",
         Created: time.Now().Unix(),
@@ -229,25 +236,33 @@ func main() {
     }
 
     // 发送角色信息
-    jsonData, _ := json.Marshal(baseResponse)
-    c.Writer.Write([]byte("data: " + string(jsonData) + "\n\n"))
-    c.Writer.Flush()
+    if err := writeSSE(c, chunk); err != nil {
+        log.Printf("Error writing SSE: %v", err)
+        return
+    }
 
     // 发送翻译内容
-    baseResponse.Choices[0].Delta.Role = ""
-    baseResponse.Choices[0].Delta.Content = result.Data
-    jsonData, _ = json.Marshal(baseResponse)
-    c.Writer.Write([]byte("data: " + string(jsonData) + "\n\n"))
-    c.Writer.Flush()
+    chunk.Choices[0].Delta.Role = ""
+    chunk.Choices[0].Delta.Content = result.Data
+    if err := writeSSE(c, chunk); err != nil {
+        log.Printf("Error writing SSE: %v", err)
+        return
+    }
 
     // 发送完成标记
     finishReason := "stop"
-    baseResponse.Choices[0].Delta.Content = ""
-    baseResponse.Choices[0].FinishReason = &finishReason
-    jsonData, _ = json.Marshal(baseResponse)
-    c.Writer.Write([]byte("data: " + string(jsonData) + "\n\n"))
-    c.Writer.Write([]byte("data: [DONE]\n\n"))
+    chunk.Choices[0].Delta.Content = ""
+    chunk.Choices[0].FinishReason = &finishReason
+    if err := writeSSE(c, chunk); err != nil {
+        log.Printf("Error writing SSE: %v", err)
+        return
+    }
+
+    if _, err := c.Writer.Write([]byte("data: [DONE]\n\n")); err != nil {
+        log.Printf("Error writing final SSE: %v", err)
+    }
     c.Writer.Flush()
 })
+
 	r.Run(fmt.Sprintf("%v:%v", cfg.IP, cfg.Port))
 }
