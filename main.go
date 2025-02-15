@@ -185,97 +185,90 @@ func main() {
 
 	// Pro API endpoint, Pro Account required
 r.POST("/v1/chat/completions", authMiddleware(cfg), func(c *gin.Context) {
+    // 记录请求信息
     var req ChatCompletionRequest
-    if err := c.BindJSON(&req); err != nil {
-        c.JSON(http.StatusBadRequest, gin.H{
-            "error": "Invalid request format",
-        })
+    if err := c.ShouldBindJSON(&req); err != nil {
+        log.Printf("Error binding request: %v", err)
+        c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
         return
     }
+    
+    log.Printf("Received request: %+v", req)
 
-    // 获取最后一条消息
-    if len(req.Messages) == 0 {
-        c.JSON(http.StatusBadRequest, gin.H{
-            "error": "No messages provided",
-        })
-        return
-    }
-    lastMessage := req.Messages[len(req.Messages)-1].Content
+    // 获取用户输入的文本
+    userMessage := req.Messages[len(req.Messages)-1].Content
+    log.Printf("User input: %s", userMessage)
 
-    // 从消息内容中提取源语言和目标语言
-    sourceLang := ""
-    targetLang := "EN"  // 默认目标语言为英语
-
-    // 解析目标语言
-    if strings.HasPrefix(lastMessage, "Translate to ") {
-        parts := strings.SplitN(lastMessage, ":", 2)
-        if len(parts) == 2 {
-            targetLang = strings.TrimSpace(strings.TrimPrefix(parts[0], "Translate to "))
-            lastMessage = strings.TrimSpace(parts[1])
-        }
-    }
-
-    // 调用 DeepL 翻译
-    result, err := translate.TranslateByDeepLX(sourceLang, targetLang, lastMessage, "", cfg.Proxy, "")
+    // 调用翻译
+    result, err := translate(userMessage)
     if err != nil {
-        c.JSON(http.StatusInternalServerError, gin.H{
-            "error": fmt.Sprintf("Translation failed: %v", err),
-        })
+        log.Printf("Translation error: %v", err)
+        c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
         return
     }
+    
+    log.Printf("Translation result: %s", result.Data)
 
-    if result.Code != http.StatusOK {
-        c.JSON(result.Code, gin.H{
-            "error": result.Message,
-        })
-        return
-    }
-
-    // 构造 OpenAI 格式的响应
-     response := ChatCompletionResponse{
+    // 构造响应
+    response := ChatCompletionResponse{
         ID:      fmt.Sprintf("chatcmpl-%d", time.Now().Unix()),
-        Object:  "chat.completion.chunk",  // 修改为标准的 OpenAI 对象类型
+        Object:  "chat.completion",
         Created: time.Now().Unix(),
-        Model:   "gpt-3.5-turbo",         // 确保使用标准的模型名称
-        Choices: []struct {
-            Index        int `json:"index"`
-            Message     struct {
-                Role    string `json:"role"`
-                Content string `json:"content"`
-            } `json:"message"`
-            FinishReason string `json:"finish_reason"`
-        }{
+        Model:   req.Model, // 使用请求中的模型
+        Choices: []Choice{
             {
                 Index: 0,
-                Message: struct {
-                    Role    string `json:"role"`
-                    Content string `json:"content"`
-                }{
+                Message: Message{
                     Role:    "assistant",
                     Content: result.Data,
                 },
                 FinishReason: "stop",
             },
         },
-        Usage: struct {
-            PromptTokens     int `json:"prompt_tokens"`
-            CompletionTokens int `json:"completion_tokens"`
-            TotalTokens      int `json:"total_tokens"`
-        }{
-            PromptTokens:     1,    // 使用固定值
-            CompletionTokens: 1,    // 使用固定值
-            TotalTokens:      2,    // 使用固定值
+        Usage: Usage{
+            PromptTokens:     1,
+            CompletionTokens: 1,
+            TotalTokens:      2,
         },
     }
-
-    // 添加响应头
-    c.Header("Content-Type", "application/json")
-    c.Header("Access-Control-Allow-Origin", "*")
-    c.Header("Cache-Control", "no-cache")
-    c.Header("Connection", "keep-alive")
     
+    log.Printf("Sending response: %+v", response)
+
     c.JSON(http.StatusOK, response)
 })
+
+// 相关结构体定义
+type ChatCompletionRequest struct {
+    Model    string    `json:"model"`
+    Messages []Message `json:"messages"`
+}
+
+type Message struct {
+    Role    string `json:"role"`
+    Content string `json:"content"`
+}
+
+type ChatCompletionResponse struct {
+    ID      string   `json:"id"`
+    Object  string   `json:"object"`
+    Created int64    `json:"created"`
+    Model   string   `json:"model"`
+    Choices []Choice `json:"choices"`
+    Usage   Usage    `json:"usage"`
+}
+
+type Choice struct {
+    Index        int     `json:"index"`
+    Message     Message `json:"message"`
+    FinishReason string  `json:"finish_reason"`
+}
+
+type Usage struct {
+    PromptTokens     int `json:"prompt_tokens"`
+    CompletionTokens int `json:"completion_tokens"`
+    TotalTokens      int `json:"total_tokens"`
+}
+
 
 
 
