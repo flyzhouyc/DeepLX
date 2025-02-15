@@ -102,33 +102,7 @@ type ChatCompletionResponse struct {
         TotalTokens      int `json:"total_tokens"`
     } `json:"usage"`
 }
-type ChatCompletionChunk struct {
-    ID      string `json:"id"`
-    Object  string `json:"object"`
-    Created int64  `json:"created"`
-    Model   string `json:"model"`
-    Choices []struct {
-        Index        int    `json:"index"`
-        Delta       struct {
-            Content string `json:"content"`
-            Role    string `json:"role,omitempty"`
-        } `json:"delta"`
-        FinishReason *string `json:"finish_reason"`
-    } `json:"choices"`
-}
 
-func writeSSE(c *gin.Context, data interface{}) error {
-    jsonData, err := json.Marshal(data)
-    if err != nil {
-        return err
-    }
-    _, err = c.Writer.Write([]byte("data: " + string(jsonData) + "\n\n"))
-    if err != nil {
-        return err
-    }
-    c.Writer.Flush()
-    return nil
-}
 
 func main() {
 	cfg := initConfig()
