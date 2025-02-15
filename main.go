@@ -19,6 +19,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"time"
 
 	translate "github.com/OwO-Network/DeepLX/translate"
 	"github.com/gin-contrib/cors"
