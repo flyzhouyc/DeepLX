@@ -103,7 +103,36 @@ type ChatCompletionResponse struct {
         TotalTokens      int `json:"total_tokens"`
     } `json:"usage"`
 }
+type ChatCompletionChunk struct {
+    ID      string `json:"id"`
+    Object  string `json:"object"`
+    Created int64  `json:"created"`
+    Model   string `json:"model"`
+    Choices []ChunkChoice `json:"choices"`
+}
 
+type ChunkChoice struct {
+    Index        int         `json:"index"`
+    Delta        DeltaStruct `json:"delta"`
+    FinishReason *string     `json:"finish_reason"`
+}
+
+type DeltaStruct struct {
+    Content string `json:"content"`
+    Role    string `json:"role,omitempty"`
+}
+func writeSSE(c *gin.Context, data interface{}) error {
+    jsonData, err := json.Marshal(data)
+    if err != nil {
+        return err
+    }
+    _, err = c.Writer.Write([]byte("data: " + string(jsonData) + "\n\n"))
+    if err != nil {
+        return err
+    }
+    c.Writer.Flush()
+    return nil
+}
 
 func main() {
 	cfg := initConfig()
@@ -215,28 +244,20 @@ func main() {
         c.Header("Transfer-Encoding", "chunked")
 
         // 发送角色信息
-        chunk := ChatCompletionChunk{
-            ID:      fmt.Sprintf("chatcmpl-%d", time.Now().Unix()),
-            Object:  "chat.completion.chunk",
-            Created: time.Now().Unix(),
-            Model:   req.Model,
-            Choices: []struct {
-                Index        int    `json:"index"`
-                Delta       struct {
-                    Content string `json:"content"`
-                    Role    string `json:"role,omitempty"`
-                } `json:"delta"`
-                FinishReason *string `json:"finish_reason"`
-            }{{
-                Index: 0,
-                Delta: struct {
-                    Content string `json:"content"`
-                    Role    string `json:"role,omitempty"`
-                }{
-                    Role: "assistant",
-                },
-            }},
-        }
+  chunk := ChatCompletionChunk{
+    ID:      fmt.Sprintf("chatcmpl-%d", time.Now().Unix()),
+    Object:  "chat.completion.chunk",
+    Created: time.Now().Unix(),
+    Model:   req.Model,
+    Choices: []ChunkChoice{{
+        Index: 0,
+        Delta: DeltaStruct{
+            Role: "assistant",
+        },
+        FinishReason: nil,
+    }},
+}
+
 
         if err := writeSSE(c, chunk); err != nil {
             log.Printf("Error writing SSE: %v", err)
