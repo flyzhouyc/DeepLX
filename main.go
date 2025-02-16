@@ -81,6 +81,7 @@ type ChatCompletionRequest struct {
         Content string `json:"content"`
     } `json:"messages"`
     Model string `json:"model"`
+    Stream bool   `json:"stream"`
 }
 
 type ChatCompletionResponse struct {
@@ -205,31 +206,106 @@ func main() {
         return
     }
 
-    // 返回标准的 ChatCompletion 响应格式
-    response := gin.H{
-        "id":      fmt.Sprintf("chatcmpl-%d", time.Now().Unix()),
-        "object":  "chat.completion",
-        "created": time.Now().Unix(),
-        "model":   req.Model,
-        "choices": []gin.H{
-            {
-                "index": 0,
-                "message": gin.H{
-                    "role":    "assistant",
-                    "content": result.Data,
-                },
-                "finish_reason": "stop",
-            },
-        },
-        "usage": gin.H{
-            "prompt_tokens":     0,
-            "completion_tokens": 0,
-            "total_tokens":      0,
-        },
-    }
+    // 判断是否为流式请求
+    if req.Stream {
+        // 流式响应
+        c.Header("Content-Type", "text/event-stream")
+        c.Header("Cache-Control", "no-cache")
+        c.Header("Connection", "keep-alive")
+        c.Header("Transfer-Encoding", "chunked")
 
-    c.JSON(http.StatusOK, response)
+        // 发送角色信息
+        chunk := ChatCompletionChunk{
+            ID:      fmt.Sprintf("chatcmpl-%d", time.Now().Unix()),
+            Object:  "chat.completion.chunk",
+            Created: time.Now().Unix(),
+            Model:   req.Model,
+            Choices: []struct {
+                Index        int    `json:"index"`
+                Delta       struct {
+                    Content string `json:"content"`
+                    Role    string `json:"role,omitempty"`
+                } `json:"delta"`
+                FinishReason *string `json:"finish_reason"`
+            }{{
+                Index: 0,
+                Delta: struct {
+                    Content string `json:"content"`
+                    Role    string `json:"role,omitempty"`
+                }{
+                    Role: "assistant",
+                },
+            }},
+        }
+
+        if err := writeSSE(c, chunk); err != nil {
+            log.Printf("Error writing SSE: %v", err)
+            return
+        }
+
+        // 发送翻译内容
+        chunk.Choices[0].Delta.Role = ""
+        chunk.Choices[0].Delta.Content = result.Data
+        if err := writeSSE(c, chunk); err != nil {
+            log.Printf("Error writing SSE: %v", err)
+            return
+        }
+
+        // 发送完成标记
+        finishReason := "stop"
+        chunk.Choices[0].Delta.Content = ""
+        chunk.Choices[0].FinishReason = &finishReason
+        if err := writeSSE(c, chunk); err != nil {
+            log.Printf("Error writing SSE: %v", err)
+            return
+        }
+
+        if _, err := c.Writer.Write([]byte("data: [DONE]\n\n")); err != nil {
+            log.Printf("Error writing final SSE: %v", err)
+        }
+        c.Writer.Flush()
+    } else {
+        // 非流式响应
+        response := ChatCompletionResponse{
+            ID:      fmt.Sprintf("chatcmpl-%d", time.Now().Unix()),
+            Object:  "chat.completion",
+            Created: time.Now().Unix(),
+            Model:   req.Model,
+            Choices: []struct {
+                Index        int `json:"index"`
+                Message     struct {
+                    Role    string `json:"role"`
+                    Content string `json:"content"`
+                } `json:"message"`
+                FinishReason string `json:"finish_reason"`
+            }{
+                {
+                    Index: 0,
+                    Message: struct {
+                        Role    string `json:"role"`
+                        Content string `json:"content"`
+                    }{
+                        Role:    "assistant",
+                        Content: result.Data,
+                    },
+                    FinishReason: "stop",
+                },
+            },
+            Usage: struct {
+                PromptTokens     int `json:"prompt_tokens"`
+                CompletionTokens int `json:"completion_tokens"`
+                TotalTokens      int `json:"total_tokens"`
+            }{
+                PromptTokens:     len(lastMessage),
+                CompletionTokens: len(result.Data),
+                TotalTokens:      len(lastMessage) + len(result.Data),
+            },
+        }
+
+        c.JSON(http.StatusOK, response)
+    }
 })
+
 
 
 	r.Run(fmt.Sprintf("%v:%v", cfg.IP, cfg.Port))
